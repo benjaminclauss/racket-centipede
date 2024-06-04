@@ -1,0 +1,555 @@
+(require 2htdp/universe)
+(require 2htdp/image)
+
+(define GRID-WIDTH 25)
+(define GRID-HEIGHT 40)
+(define CELL-SIZE 15)
+(define BG (empty-scene (* CELL-SIZE GRID-WIDTH) (* CELL-SIZE GRID-HEIGHT)))
+
+(define LEFT-BOUND 0)
+(define RIGHT-BOUND (- GRID-WIDTH 1))
+(define TOP (- GRID-HEIGHT 1))
+(define BOTTOM 0)
+ 
+(define PLAYER (square CELL-SIZE 'solid 'black))
+(define BULLET (rectangle 3 8 'solid 'orange))
+(define CENTIPEDE-CELL (square CELL-SIZE 'solid 'green))
+(define TONGUE (triangle 5 'solid 'red))
+(define LEFT-HEAD (overlay/align "left" "middle" (rotate 90 TONGUE) CENTIPEDE-CELL))
+(define RIGHT-HEAD (overlay/align "right" "middle" (rotate 30 TONGUE) CENTIPEDE-CELL))
+ 
+(define MUSHROOM-RADIUS (/ CELL-SIZE 2))
+(define MUSHROOM-1-C (circle MUSHROOM-RADIUS "solid" 'LightSalmon))
+(define MUSHROOM-2-C (circle MUSHROOM-RADIUS "solid" 'Salmon))
+(define MUSHROOM-3-C (circle MUSHROOM-RADIUS "solid" 'OrangeRed))
+(define MUSHROOM-4-C (circle MUSHROOM-RADIUS "solid" 'DarkRed))
+ 
+(define WINNER (text "WINNER" 72 'black))
+(define LOSER (text "LOSER" 72 'black))
+
+;; place-image-grid : Image Number Number Image -> Image
+;; Just like place-image, except position is in grid coordinates instead of pixels
+(define (place-image-grid img x y bkg)
+  (place-image img 
+               (* (+ x 0.5) CELL-SIZE)
+               (- (* GRID-HEIGHT CELL-SIZE) (* (+ y 0.5) CELL-SIZE))
+               bkg))
+
+;; A Mushroom is a one of:
+;; -(make-mushroom Posn Number)
+;; - 'empty
+(define-struct mushroom (posn state))
+;; -A posn is a the mushroom's cartesian coordinates
+;; -A state is a number than corresponds to a mushroom image
+
+;; mushroom-temp : Mushroom -> ??
+(define (mushroom-temp m)
+  (... (mushroom-posn m) ... (mushroom-state y) ...))
+
+;; A LoM [Listof Mushroom] is one of
+;; - empty
+;; - (cons Mushroom LoM)
+
+;; lom-temp : [Listof Mushroom] -> ??
+#;(define (lom-temp lom)
+  (cond
+    [(empty? lom) ...]
+    [else ... (first lom) ... (lom-temp (rest lom))]))
+
+;; contains : [Listof Numbers] Number -> Boolean
+;; This function takes a list of numbers and returns true if the
+;; given number is in that list
+(define (contains? l val)
+  (cond
+    [(empty? l) false]
+    [(cons? l) (or (= (first l) val) (contains? (rest l) val))]))
+
+(check-expect (contains? (cons 1 empty) 1) true)
+(check-expect (contains? (cons 1 empty) 6) false)
+(check-expect (contains? (cons 5 (cons 6(cons 1 empty))) 6) true)
+(check-expect (contains? (cons 5 (cons 6(cons 1 empty))) 7) false)
+
+;; count : List -> Number
+;; This function takes a list and returns the number of items in it.
+(define (count list)
+  (cond
+    [(empty? list) 0]
+    [(cons? list) (+ 1 (count(rest list)))]))
+
+(check-expect (count (cons 1 (cons 2 empty))) 2)
+
+;; rand-mushroom : [Listof Numbers] -> Mushroom
+;; This functions takes in two lists of number and two random numbers and makes
+;; sure those numbers aren't on the lists. If they aren't, it creates a
+;; mushroom out of the numbers. If they are, it returns 'empty.
+(define (rand-mushroom x y countedx countedy)
+     (if (and (contains? countedx x) (contains? countedy y))
+         'empty
+         (make-mushroom
+          (make-posn
+           x
+           y) 4)))
+
+(check-expect (rand-mushroom 0 0 (cons 1 empty) (cons 1 empty)) (make-mushroom (make-posn 0 0) 4))
+(check-expect (rand-mushroom 0 1 (cons 1 empty) (cons 1 empty)) (make-mushroom (make-posn 0 1) 4))
+(check-expect (rand-mushroom 1 1 (cons 1 empty) (cons 1 empty)) 'empty)
+
+(define (generate-initial-field LoM num countedx countedy mushroom)
+  (cond
+    [(> num 0) (cond
+                  [(mushroom? mushroom)
+                   (generate-initial-field
+                    (cons mushroom LoM)
+                    (sub1 num)
+                    (cons (posn-x (mushroom-posn mushroom)) countedx)
+                    (cons (posn-y (mushroom-posn mushroom)) countedy)
+                    (rand-mushroom (random (+ 1 (- GRID-WIDTH 1)))
+                                   (+ (random (- GRID-HEIGHT 2)) 1)
+                                   countedx
+                                   countedy))]
+                  [else
+                   (generate-initial-field
+                    LoM num countedx countedy
+                    (rand-mushroom
+                     (random (+ 1 (- GRID-WIDTH 1)))
+                     (+ (random (- GRID-HEIGHT 2)) 1) countedx countedy))])]
+    [else LoM]))
+(define INITIAL-MUSHROOM-FIELD (generate-initial-field empty 40 empty empty
+     (rand-mushroom
+                     (random (+ 1 (- GRID-WIDTH 1)))
+                     (+ (random (- GRID-HEIGHT 2)) 1) empty empty)))
+
+(check-expect (count (generate-initial-field empty 1 empty empty 'empty)) 1)
+(check-expect (count (generate-initial-field empty 40 empty empty 'empty)) 40)
+(check-expect (count INITIAL-MUSHROOM-FIELD) 40)
+
+;; a CentipedeBody [Listof Segment] is one of:
+;; - (cons Segment empty)
+;; - (cons Segment CentipedeBody)
+;; A Segment is a Posn
+
+;;
+;; TO BE REMOVED
+;;
+(define CBODY (cons (make-posn 3 39)
+                    (cons (make-posn 2 39)
+                          (cons (make-posn 1 39)
+                                (cons (make-posn 0 39) empty)))))
+
+;; centipede-body-temp : CentipedeBody -> ??
+#;(define (centipede-body-temp cb)
+  (cond
+    [(empty? (rest cb)) ...]
+    [else ... (first cb) ... (centipede-body-temp (rest cb))]))
+
+;; A Centipede is a (make-centipede VerticalDirection HorizontalDirection CentipedeBody)
+;; A VerticalDirection is one of
+;; - 'up
+;; - 'down
+;; A HorizontalDirection is one of
+;; - 'left
+;; - 'right
+(define-struct centipede (v-direction h-direction body))
+
+;;
+;; TO BE REMOVED
+;;
+(define CENT (make-centipede 'down 'right CBODY))
+
+;; centipede-temp : Centipede -> ??
+(define (centipede-temp c)
+  (... (centipede-down? c) ... (centipede-dir c) ... (centipede-body c) ...))
+
+;; a LoC [Listof Centipede] is one of:
+;; - empty
+;; - (cons Centipede CentipedeList)
+(define centipede-list (cons CENT empty))
+
+;; loc-temp : [Listof Centipede] -> ??
+#;(define (loc-temp loc)
+  (cond
+    [(empty? loc) ...]
+    [else ... (first loc) ... (loc-temp loc)]))
+
+;; A Shooter is a (make-shooter Image Posn)
+;; - image is the image of the shooter
+;; - posn is the position of the shooter
+(define-struct shooter (image posn))
+
+;; shooter-temp : Shooter -> ??
+(define (shooter-temp s)
+  (... (shooter-image s) ... (shooter-posn s) ...))
+
+(define SHOOTER
+  (make-shooter PLAYER (make-posn 12 0)))
+
+;; A bullet is one of:
+;; - (make-bullet Image Posn)
+;; - 'none
+(define-struct bullet(image posn))
+;; - image is the image of the bullet
+;; - posn is the position of the bullet
+
+(define-struct world (LoC LoM bullet shooter))
+;; A world is a (make-world [Listof Centipede] [Listof Mushroom] Bullet Shooter)
+;; -A LoC is a List of a Centipede
+;; -A LoM is a List of Mushrooms
+;; -A bullet is a Bullet
+;; -A shooter is a Shooter
+
+;; world-temp : World -> ??
+(define (world-temp w)
+  (... (world-LoC w) ...
+       (world-LoM w) ...
+       (world-bullet w) ...
+       (world-shooter w) ...))
+
+;; update-all : World -> World
+;; This function takes a world, checks a series of conditions, and returns
+;; a new world based on the results
+(define (update-all world)
+  (cond
+    [(mushroom? (bullet-mushroom-collision (world-bullet world) (world-LoM world)))
+     (make-world (move-centipedes (world-LoC world) (world-LoM world))
+                 (update-mushroom-list
+                  (bullet-mushroom-collision (world-bullet world) (world-LoM world))
+                  (world-LoM world))
+                  'none (world-shooter world))]
+    ;(bullet-centipedes-collision?
+    [else (make-world (move-centipedes (world-LoC world) (world-LoM world))
+                      (world-LoM world)
+                      (move-bullet (world-bullet world))
+                      (world-shooter world))]))
+
+;; bullet-mushroom-collision : Bullet [Listof Mushroom] -> Mushroom
+;; This function takes a bullet and a list of mushrooms and returns a
+;; hit mushroom if the posn of the bullet is the same as the posn as one of the
+;; mushrooms. Otherwise return 'empty.
+(define (bullet-mushroom-collision bullet LoM)
+  (cond
+    [(symbol? bullet) 'empty]
+    [(empty? LoM) 'empty]
+    [(cons? LoM) (if (and (= (posn-x (bullet-posn bullet))
+                             (posn-x (mushroom-posn (first LoM))))
+                          (= (posn-y (bullet-posn bullet))
+                             (posn-y (mushroom-posn (first LoM)))))
+                      (first LoM)
+                     (bullet-mushroom-collision bullet (rest LoM)))]))
+
+(define MUSHROOM-EX0a (make-mushroom (make-posn 0 0) 4))
+(define MUSHROOM-EX0b (make-mushroom (make-posn 0 0) 3))
+(define MUSHROOM-EX0c (make-mushroom (make-posn 0 0) 2))
+(define MUSHROOM-EX0d (make-mushroom (make-posn 0 0) 1))
+(define BULLET1 (make-bullet BULLET (make-posn 0 0)))
+
+(check-expect
+ (bullet-mushroom-collision BULLET1 (cons MUSHROOM-EX0a empty)) MUSHROOM-EX0a)
+(check-expect
+ (bullet-mushroom-collision BULLET1 (cons MUSHROOM-EX0b empty)) MUSHROOM-EX0b)
+(check-expect
+ (bullet-mushroom-collision BULLET1
+                            (cons
+                             (make-mushroom (make-posn 0 1) 1) empty)) 'empty)
+
+;; increment-mushroom : Mushroom -> Mushroom
+;; This function takes a mushroom, decreases its state and returns it
+;; unless the initial state was 1 in which case it return 'empty
+(define (increment-mushroom mushroom)
+  (cond
+    [(= 1 (mushroom-state mushroom)) 'empty]
+    [else (make-mushroom (mushroom-posn mushroom)
+                         (- (mushroom-state mushroom) 1))]))
+(check-expect (increment-mushroom MUSHROOM-EX0a) MUSHROOM-EX0b)
+(check-expect (increment-mushroom MUSHROOM-EX0b) MUSHROOM-EX0c)
+(check-expect (increment-mushroom MUSHROOM-EX0c) MUSHROOM-EX0d)
+(check-expect (increment-mushroom MUSHROOM-EX0d) 'empty)
+
+;; update-mushroom-list : Mushroom [Listof Mushroom] -> [Listof Mushroom]
+;; This function takes in a mushroom and a list of mushrooms, increments
+;; the mushroom's state and adds the new mushroom, if it exists, to the list.
+(define (update-mushroom-list mushroom LoM)
+  (cond
+    [(empty? LoM) empty]
+    [(cons? LoM) (cond
+                   [(and (= (posn-x (mushroom-posn mushroom))
+                            (posn-x (mushroom-posn (first LoM))))
+                          (= (posn-y (mushroom-posn mushroom))
+                             (posn-y (mushroom-posn (first LoM)))))
+                    (if (symbol? (increment-mushroom (first LoM)))
+                        (rest LoM)
+                        (cons (increment-mushroom (first LoM)) (rest LoM)))]
+                   [else
+                    (cons
+                     (first LoM)
+                     (update-mushroom-list mushroom  (rest LoM)))])]))
+
+(check-expect
+ (update-mushroom-list MUSHROOM-EX0a
+                       (cons MUSHROOM-EX0a empty)) (cons MUSHROOM-EX0b empty))
+(check-expect
+ (update-mushroom-list MUSHROOM-EX0b
+                       (cons MUSHROOM-EX0b empty)) (cons MUSHROOM-EX0c empty))
+(check-expect
+ (update-mushroom-list MUSHROOM-EX0c
+                       (cons MUSHROOM-EX0c empty)) (cons MUSHROOM-EX0d empty))
+(check-expect
+ (update-mushroom-list MUSHROOM-EX0d (cons MUSHROOM-EX0d empty)) empty)
+
+;; move-centipedes : [Listof Centipede] [Listof Mushroom] -> [Listof Centipede]
+(define (move-centipedes loc lom)
+  (cond
+    [(empty? loc) loc]
+    [else (cons (move-centipede (first loc) lom) (move-centipedes (rest loc) lom))]))
+
+;; move-centipede : Centipede [Listof Mushroom] -> Centipede
+;; moves centipede to next position
+(define (move-centipede c lom)
+  (cond
+    [(hits-wall? c) (move-row c)]
+    [(hits-mushroom? c lom) (move-row c)]
+    [else
+      (make-centipede
+       (centipede-v-direction c)
+       (centipede-h-direction c)
+       (move-centipede-body (centipede-body c) (centipede-h-direction c)))]))
+
+;; hits-wall? : Centipede -> Boolean
+;; checks if centipede will hit wall
+(define (hits-wall? c)
+  (or
+   (and (= LEFT-BOUND (posn-x (first (centipede-body c))))
+        (symbol=? 'left (centipede-h-direction c)))
+   (and (= RIGHT-BOUND (posn-x (first (centipede-body c))))
+        (symbol=? 'right (centipede-h-direction c)))))
+
+;; posn=? : Posn Posn -> Boolean
+;; returns true if Posn's are equal
+(define (posn=? posn1 posn2)
+  (and (= (posn-x posn1) (posn-x posn2)) (= (posn-y posn1) (posn-y posn2))))
+
+;; hits-mushroom? : Centipede [Listof Mushroom] -> Boolean
+;; checks if centipede will hit mushroom
+(define (hits-mushroom? c lom)
+  (cond
+    [(empty? lom) false]
+    [(symbol=? (centipede-h-direction c) 'right)
+     (or (posn=? (mushroom-posn (first lom))
+                  (make-posn
+                   (+ (posn-x (first (centipede-body c))) 1)
+                   (posn-y (first (centipede-body c)))))
+          (hits-mushroom? c (rest lom)))]
+    [(symbol=? (centipede-h-direction c) 'left)
+     (or (posn=? (mushroom-posn (first lom))
+                  (make-posn
+                   (- (posn-x (first (centipede-body c))) 1)
+                   (posn-y (first (centipede-body c)))))
+          (hits-mushroom? c (rest lom)))]))
+
+;; move-row : Centipede -> Centipede
+;; moves centipede to next row
+(define (move-row c)
+  (cond
+    [(or
+      (and (= TOP (posn-y (first (centipede-body c))))
+           (symbol=? 'up (centipede-v-direction c)))
+      (and (= BOTTOM (posn-y (first (centipede-body c))))
+           (symbol=? 'down (centipede-v-direction c))))
+     (make-centipede
+      (flip (centipede-v-direction c))
+      (flip (centipede-h-direction c))
+      (cons (new-head (first (centipede-body c))
+                      (flip (centipede-v-direction c)))
+            (all-but-last-seg (centipede-body c))))]
+    [else
+     (make-centipede
+      (centipede-v-direction c)
+      (flip (centipede-h-direction c))
+      (cons (new-head (first (centipede-body c))
+                      (centipede-v-direction c))
+            (all-but-last-seg (centipede-body c))))]))
+
+;; flip : Direction -> Direction
+(define (flip dir)
+  (cond
+    [(symbol=? dir 'left) 'right]
+    [(symbol=? dir 'right) 'left]
+    [(symbol=? dir 'up) 'down]
+    [(symbol=? dir 'down) 'up]))
+
+;; move-centipede-body : CentipedeBody Direction -> CentipedeBody
+;; moves centipede body in given direction
+(define (move-centipede-body body dir)
+  (cons (new-head (first body) dir) (all-but-last-seg body)))
+
+;; new-head : Segment Direction -> Segment
+(define (new-head seg dir)
+  (cond
+    [(symbol=? dir 'left) (make-posn (sub1 (posn-x seg)) (posn-y seg))]
+    [(symbol=? dir 'right) (make-posn (add1 (posn-x seg)) (posn-y seg))]
+    [(symbol=? dir 'up) (make-posn (posn-x seg) (add1 (posn-y seg)))]
+    [(symbol=? dir 'down) (make-posn (posn-x seg) (sub1 (posn-y seg)))]))
+
+;; all-but-last-seg : CentipedeBody -> CentipedeBody
+;; Chops the last segment off the given non-empty list of CentipedeBody
+(define (all-but-last-seg cb)
+  (cond
+    [(empty? (rest cb)) empty]
+    [(cons? (rest cb)) 
+     (cons (first cb) (all-but-last-seg (rest cb)))]))
+
+;; move-bullet : Bullet -> Bullet
+(define (move-bullet b)
+  (cond
+    [(symbol? b) b]
+    [else (cond
+            [(> (posn-y (bullet-posn b)) TOP) 'none]
+            [else (make-bullet (bullet-image b)
+                               (make-posn
+                                (posn-x (bullet-posn b))
+                                (+ 0.25 (posn-y (bullet-posn b)))))])]))
+
+;; shoot-or-move : World Key -> World
+;; This function takes a world and a key and returns a new world with
+;; a moved shooter and/or created bullet
+
+(define (shoot-or-move world key)
+  (cond
+    [(or (key=? key "left") (key=? key "right")) (make-world (world-LoC world) (world-LoM world) (world-bullet world) (move-shooter (world-shooter world) key))]
+    [(and (key=? key " ") (symbol? (world-bullet world))) (make-world (world-LoC world) (world-LoM world) (shoot-bullet (world-shooter world)) (world-shooter world))]
+    [else world]))
+
+;; move-shooter : Shooter Key -> Shooter
+;; This function takes a shooter and a key and returns shooter in a new position
+(define (move-shooter s key)
+  (cond
+    [(key=? "left" key) (cond
+                          [(< (- (posn-x (shooter-posn s)) 1) LEFT-BOUND) s]
+                          [else (make-shooter (shooter-image s)
+                                              (make-posn
+                                               (- (posn-x (shooter-posn s)) 1)
+                                               (posn-y (shooter-posn s))))])]
+    [(key=? "right" key) (cond
+                          [(> (+ (posn-x (shooter-posn s)) 1) RIGHT-BOUND) s]
+                          [else (make-shooter (shooter-image s)
+                                              (make-posn
+                                               (+ (posn-x (shooter-posn s)) 1)
+                                               (posn-y (shooter-posn s))))])]))
+
+;; shoot-bullet : Shooter -> Bullet
+;; This function takes a shooter and returns a bullet at the shooter's position
+(define (shoot-bullet shooter)
+  (make-bullet BULLET (shooter-posn shooter)))
+
+;; world->image : World -> Image
+;; This function takes a world and produces an image from it
+(define (world->image w)
+  (draw-centipedes (world-LoC w)
+  (draw-mushrooms (world-LoM w)
+  (draw-shooter (world-shooter w)
+  (draw-bullet (world-bullet w) BG)))))
+
+;; draw-centipedes : [Listof Centipede] Image -> Image
+(define (draw-centipedes loc img)
+  (cond
+    [(empty? loc) img]
+    [else (draw-centipede (first loc) (draw-centipedes (rest loc) img))]))
+
+;; draw-centipede : Centipede Image -> Image
+(define (draw-centipede c img)
+  (draw-centipede-head c (draw-centipede-body (rest (centipede-body c)) img)))
+
+;; draw-centipede-head : Centipede Image -> Image
+(define (draw-centipede-head c img)
+  (place-image-grid
+           (get-centipede-head (centipede-h-direction c))
+           (posn-x (first (centipede-body c)))
+           (posn-y (first (centipede-body c)))
+           img))
+
+;; get-centipede-head : HorizontalDirection -> Image
+(define (get-centipede-head dir)
+  (cond
+    [(symbol=? 'right dir) RIGHT-HEAD]
+    [(symbol=? 'left dir) LEFT-HEAD]))
+
+;; draw-centipede-body : CentipedeBody Image -> Image
+(define (draw-centipede-body cb img)
+  (cond
+    [(empty? (rest cb))
+     (place-image-grid
+           CENTIPEDE-CELL
+           (posn-x (first cb))
+           (posn-y (first cb))
+           img)]
+    [(cons? cb)
+     (place-image-grid
+           CENTIPEDE-CELL
+           (posn-x (first cb))
+           (posn-y (first cb))
+           (draw-centipede-body (rest cb) img))]))
+
+;; draw-mushrooms : [Listof Mushroom] Image -> Image
+;; This function takes a list of mushroom and an image and puts the mushrooms on the image
+(define (draw-mushrooms lom img)
+  (cond
+    [(empty? lom) img]
+    [else (draw-mushroom
+            (first lom)
+            (draw-mushrooms (rest lom) img))]))
+
+;; draw-mushroom : Mushroom Image -> Image
+;; This function takes a mushroom and an image and places
+;; the mushroom on the image
+(define (draw-mushroom m img)
+  (place-image-grid
+           (mushroom-image m)
+           (posn-x (mushroom-posn m))
+           (posn-y (mushroom-posn m))
+           img))
+  
+;; mushroom-image : Mushroom -> Image
+;; This function takes a Mushroom and returns the Mushroom image based
+;; on the given mushroom's state
+(define (mushroom-image m)
+  (cond
+    [(= (mushroom-state m) 1) MUSHROOM-1-C]
+    [(= (mushroom-state m) 2) MUSHROOM-2-C]
+    [(= (mushroom-state m) 3) MUSHROOM-3-C]
+    [(= (mushroom-state m) 4) MUSHROOM-4-C]))
+
+(check-expect (mushroom-image MUSHROOM-EX0d) MUSHROOM-1-C)
+(check-expect (mushroom-image MUSHROOM-EX0c) MUSHROOM-2-C)
+(check-expect (mushroom-image MUSHROOM-EX0b) MUSHROOM-3-C)
+(check-expect (mushroom-image MUSHROOM-EX0a) MUSHROOM-4-C)
+
+;; draw-bullet : Bullet Image -> Image
+;; This function takes a bullet and an image returns the bullet placed
+;; on the image.
+(define (draw-bullet bullet img)
+  (cond
+    [(symbol? bullet) img]
+    [else (place-image-grid
+           (bullet-image bullet)
+           (posn-x (bullet-posn bullet))
+           (posn-y (bullet-posn bullet))
+           img)]))
+
+;; draw-shooter : Shooter Image -> Image
+;; This function take a shooter and an image and puts the shooter on the image.
+(define (draw-shooter shooter img)
+  (place-image-grid
+   (shooter-image shooter)
+   (posn-x (shooter-posn shooter))
+   (posn-y (shooter-posn shooter))
+   img))
+
+(define WORLD0
+  (make-world centipede-list INITIAL-MUSHROOM-FIELD 'none SHOOTER))
+
+;; big-bang : WorldState -> WorldState
+;; This function takes a world and executes a bunch of functions on it.
+(big-bang WORLD0
+          [on-tick update-all .005]
+          [on-key shoot-or-move]
+          [to-draw world->image])
+
